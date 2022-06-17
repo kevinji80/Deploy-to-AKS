@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: kevinji80.azurecr.io
+        username: ${{ secrets.acr_kevinji80_username }}
+        password: ${{ secrets.acr_kevinji80_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/app" -f  "app/Dockerfile" -t kevinji80.azurecr.io/myaks:${{ github.sha }} --label dockerfile-path=app/Dockerfile
+        docker push kevinji80.azurecr.io/myaks:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_myaks_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep myaksadb5 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace myaksadb5`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: myaksadb5
+        container-registry-url: kevinji80.azurecr.io
+        container-registry-username: ${{ secrets.acr_kevinji80_username }}
+        container-registry-password: ${{ secrets.acr_kevinji80_password }}
+        secret-name: myaksdockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: myaksadb5
+        manifests: |
+          manifests/deployment-1.yml
+          manifests/service-1.yml
+        images: |
+          kevinji80.azurecr.io/myaks:${{ github.sha }}
+        imagepullsecrets: |
+          myaksdockerauth
